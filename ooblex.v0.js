@@ -1,8 +1,14 @@
-var Ooblex = new (function(){
+var Ooblex = {};
+
+Ooblex.Media = new (function(){
 	
 	var session = {};
 
-	var generateToken = function(){
+	session.onReady = function(){
+		console.log("Stream Publishing");
+	}
+
+	session.generateToken = function(){
 	  var text = "";
 	  var possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 	  for (var i = 0; i < 12; i++){
@@ -11,9 +17,9 @@ var Ooblex = new (function(){
 	  return text;
 	};
 	
-	var connect = function(token = null, callback = createStream){
+	session.connect = function(token = null, callback = session.createStream){
 		if (token == null){
-			token = generateToken(); // If token was not provided, generate one.
+			token = session.generateToken(); // If token was not provided, generate one.
 		}
 		session.ws = new WebSocket("wss://brain.stevesserver.com:8100");		
 		session.pc = new RTCPeerConnection({'iceServers': [{urls: "stun:stun.l.google.com:19302"}, {urls: "stun:numb.viagenie.ca:3478"}]});
@@ -33,16 +39,18 @@ var Ooblex = new (function(){
 		                        callback(); // Need to create stream before an SDP offer can be generated
 		                } else if (msg.request=="publish"){
 		                        if (msg.jsep){
-		                                publishStream(msg.jsep)
+		                                session.publishStream(msg.jsep)
 		                        } else {
 		                                console.log("No SDP provided; error");
 		                        }
-		                }
+		                } else if (msg.request=="nothing"){
+					session.onReady();
+				}
 		        }
 		}
 		return session;
 	};	
-	var createStream = function(videoElement = null){ // stream is used to generated an SDP
+	session.createStream = function(videoElement = null){ // stream is used to generated an SDP
 		if (videoElement == null){
 			var videoElement = document.createElement('video');
 			videoElement.autoplay = true;
@@ -56,20 +64,20 @@ var Ooblex = new (function(){
 	                audio: true
 	        }).then(function success(stream) {
 	                videoElement.srcObject = stream;
-	                offerSDP(stream);
+	                session.offerSDP(stream);
 	        });
 		return videoElement;
 	};
-	var offerSDP = function(stream){  // publisher
+	session.offerSDP = function(stream){  // publisher
 			session.pc.addStream(stream);
-			session.pc.onicecandidate = onIceCandidate;
+			session.pc.onicecandidate = session.onIceCandidate;
 			session.pc.createOffer(function(description){
 					session.pc.setLocalDescription(description, function (){
-							publishOffer(description);
+							session.publishOffer(description);
 					}, function(){});
-			}, errorHandler);
+			}, session.errorHandler);
 	};
-	var publishOffer = function(description){
+	session.publishOffer = function(description){
 			console.log("publishing SDP Offer");
 			console.log(description);
 			var data = {};
@@ -78,7 +86,7 @@ var Ooblex = new (function(){
 			console.log(data);
 			session.ws.send(JSON.stringify(data));
 	};
-	var onIceCandidate = function(event){ // deprecated, but chrome still uses it.
+	session.onIceCandidate = function(event){ // deprecated, but chrome still uses it.
 			console.log("onIceCandidate Event");
 			console.log(event);
 			if (event.candidate==null){console.log("Ignoring Ice Event");return;}
@@ -87,21 +95,109 @@ var Ooblex = new (function(){
 			console.log(data);
 			session.ws.send(JSON.stringify(data));
 	};
-	var publishStream = function(description){
+	session.publishStream = function(description){
 			session.pc.setRemoteDescription(new RTCSessionDescription(description), function(){
 					console.log("Starting Video Stream Publishing");
-					doStart();
-					}, errorHandler);
+					}, session.errorHandler);
 
 	};
-	var errorHandler = function(error){
+	session.errorHandler = function(error){
 		console.log("Error:");
 		console.log(error);
 	};
-	return {
-		publishOffer: publishOffer,
-		connect: connect,
-		createStream: createStream,
-		generateToken: generateToken
+	return session;
+})();
+
+
+Ooblex.Brain = new (function(){
+	var session = {};
+	
+	session.onOpen = function(evt){console.log("Connected to Ooblex Brain Service.");};
+	session.onClose = function(evt){console.log("Closed connection with Ooblex Brain Service");};
+	session.onError = function(evt){console.log("Error: " + evt.data + '\n');}
+
+	session.onMessage = function(evt){console.log("Mesage: "+ evt.data + '\n');};
+
+	session.connect = function (){
+	    session.ws = new WebSocket("wss://brain.stevesserver.com:8800/");
+	    session.ws.onopen = function(evt) { session.onOpen(evt) };
+	    session.ws.onclose = function(evt) { session.onClose(evt) };
+	    session.ws.onmessage = function(evt) { session.onMessage(evt) };
+	    session.ws.onerror = function(evt) { session.onError(evt) };
 	}
+
+  	session.onError = function (evt){
+    		console.log('error: ' + evt.data + '\n');
+		session.ws.close();
+		document.myform.disconnectButton.disabled = true;
+ 	}
+
+  	session.doSend = function (message){
+    		console.log(message + '\n'); 
+    		session.ws.send(message);
+  	}
+
+  	var faceState = false;
+
+  	session.doFace =  function (){ // continue off code by repeating this update. getting it working; rabbit MQ simultanous issue. writing email to IBM. finishing up doc and module. then get the scaling going. Not sure about custom 3d models yet. 
+		if (faceState==false){
+			session.ws.send("FaceOn");
+			faceState = true;
+			document.myform.faceOnButton.value="Turn Face Detect Off";
+			document.myform.faceOnButton.className = "onstate";
+		} else {
+			session.ws.send("FaceOff");
+			faceState = false;
+			document.myform.faceOnButton.value="Turn Face Detect On";
+			document.myform.faceOnButton.className = "readystate";
+		}
+    		console.log("Toggling Face Detection State");
+  	}
+
+  objectState = false;
+  session.doObject = function(){
+        if (objectState==false){
+                session.ws.send("ObjectOn");
+                objectState = true;
+                document.myform.objectOnButton.value="Turn Object Detect Off";
+		document.myform.objectOnButton.className = "onstate";
+        } else {
+                session.ws.send("ObjectOff");
+                objectState = false;
+                document.myform.objectOnButton.value="Turn Object Detect On";
+		document.myform.objectOnButton.className = "readystate";
+        }
+        console.log("Toggling Object Detection State");
+  }
+
+  var speedState = false;
+  session.doSpeed = function(){
+        if (speedState==false){
+                session.ws.send("speedFast");
+                speedState = true;
+                document.myform.speedOnButton.value="Slow Down";
+                document.myform.speedOnButton.className = "onstate";
+        } else {
+                session.ws.send("speedSlow");
+                speedState = false;
+                document.myform.speedOnButton.value="Speed Up";
+                document.myform.speedOnButton.className = "readystate";
+        }
+        console.log("Toggling Object Detection State");
+  }
+
+
+  session.doImage = function(){
+	session.ws.send("saveImage");
+	console.log("Requesting Image");
+  }
+
+
+   session.doDisconnect = function(){
+		session.ws.close();
+		//pc.close();
+		//ws.close();
+   }
+
+	return session;
 })();
